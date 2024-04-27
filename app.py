@@ -59,61 +59,25 @@ mta = Mtapi(
     expires_seconds=app.config['CACHE_SECONDS'],
     threaded=app.config['THREADED'])
 
-def response_wrapper(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        resp = f(*args, **kwargs)
 
-        if not isinstance(resp, Response):
-            # custom JSON encoder; this is important
-            resp = Response(
-                response=json.dumps(resp, cls=CustomJSONEncoder),
-                status=200,
-                mimetype="application/json"
-            )
-
-        add_cors_header(resp)
-
-        return resp
-
-    return decorated_function
-
-def add_cors_header(resp):
-    if app.config['DEBUG']:
-        resp.headers['Access-Control-Allow-Origin'] = '*'
-    elif 'CROSS_ORIGIN' in app.config:
-        resp.headers['Access-Control-Allow-Origin'] = app.config['CROSS_ORIGIN']
-
-    return resp
-
-@app.route('/')
-@response_wrapper
+@app.route('/',methods=['GET'])
 def index():
-    return {
-        'title': 'MTAPI',
-        'readme': 'Visit https://github.com/jonthornton/MTAPI for more info'
-        }
+    routes_json = get_routes()  # Assuming routes() returns a JSON string
+    routes_data = json.loads(routes_json)  # Parse JSON string into dictionary
+    return render_template('index.html', routes=routes_data)
 
 @app.route('/by-location', methods=['GET'])
-@response_wrapper
 def by_location():
     try:
         location = (float(request.args['lat']), float(request.args['lon']))
     except KeyError as e:
         print(e)
-        resp = Response(
-            response=json.dumps({'error': 'Missing lat/lon parameter'}),
-            status=400,
-            mimetype="application/json"
-        )
-
-        return add_cors_header(resp)
+        return render_template('error.html', error='Missing lat/lon parameter')
 
     data = mta.get_by_point(location, 5)
-    return _make_envelope(data)
+    return render_template('bylocation.html', data=data, updated=mta.last_update())
 
 @app.route('/by-route/<route>', methods=['GET'])
-@response_wrapper
 def by_route(route):
 
     if route.islower():
@@ -121,18 +85,11 @@ def by_route(route):
 
     try:
         data = mta.get_by_route(route)
-        return _make_envelope(data)
-    except KeyError as e:
-        resp = Response(
-            response=json.dumps({'error': 'Station not found'}),
-            status=404,
-            mimetype="application/json"
-        )
-
-        return add_cors_header(resp)
+        return render_template('byRoute.html', data=data, updated=mta.last_update(), route=route)
+    except KeyError:
+        return render_template('error.html', error='Station not found')
 
 @app.route('/by-id/<id_string>', methods=['GET'])
-@response_wrapper
 def by_index(id_string):
     ids = id_string.split(',')
     try:
@@ -148,12 +105,9 @@ def by_index(id_string):
         return add_cors_header(resp)
 
 @app.route('/routes', methods=['GET'])
-@response_wrapper
-def routes():
-    return {
-        'data': sorted(mta.get_routes()),
-        'updated': mta.last_update()
-        }
+def get_routes():
+    routes_data = sorted(mta.get_routes())
+    return json.dumps(routes_data)
 
 def _envelope_reduce(a, b):
     if a['last_update'] and b['last_update']:
